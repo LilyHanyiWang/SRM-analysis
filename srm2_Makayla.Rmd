@@ -1,0 +1,467 @@
+---
+title: "SRM analysis"
+author: "Makayla"
+date: '2022-06-02'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This document provides all the code and output for the analysis that has been previously discussed. These are split into data cleaning steps, summary of the cleaned data, and statistical analysis of the cleaned data. Naturally, each step builds on the earlier steps, so it is important to verify that the earlier steps make sense, before going much further.
+
+The coding is done entirely in the R software, using (where possible) well-known functions, that most R users would understand. More idiosynctratic use of R is noted, when it arises.  
+
+Please feel free to ask questions, and to correct anything I've done that doesn't match the intended analysis.
+
+### Data cleaning
+
+First we read in the data and note how the column letters (in Excel) match up to the variable names we use in this analysis:
+
+```{r datacleaning0}
+library("readxl")
+data <- read_excel("Copy of 2013 2014 for data entry (2).xlsx", sheet=1)
+#names(srm)
+dLETTERS <- sapply(1:26, function(i){paste(LETTERS[i], LETTERS[i], sep="")})
+cbind(c(LETTERS, dLETTERS)[1:38], names(data))
+```
+
+Some simple numeric summaries of some variables of interest
+```{r datacleaning0a}
+# variables of interest
+summary(data[, c(2,4,5, 6, 39, 43)])
+```
+
+Simple pairwise scatterplots of some variables of interest
+```{r datacleaning0b, echo=FALSE}
+pairs(data[,c(2,4,5,6,39,43)])
+```
+
+Examining protocol
+```{r datacleaning1, echo=FALSE}
+# Protocol
+table(data[,7], useNA="ifany")  # 2 NA, also unstimulated
+```
+Examining FSH dose: there are some strange values, which we need to omit and then convert the stored data to be numeric, not character strings:
+```{r datacleaning2}
+# FSH dose
+summary(data[,c(9,11,13)])  # what does PM, QD mean? Also blank? (Skip for now)
+table(data[,9])   # 6 QD 
+table(data[,11])  # 2 QD
+table(data[,13])  # 4 QD
+
+# convert to numbers
+data$fsh3 <- as.numeric(apply(data[,9], 1, function(x){strsplit(x, " ", fixed=TRUE)[[1]][1]}))
+data$fsh4 <- as.numeric(apply(data[,11], 1, function(x){strsplit(x, " ", fixed=TRUE)[[1]][1]}))
+data$fsh5 <- as.numeric(apply(data[,13], 1, function(x){strsplit(x, " ", fixed=TRUE)[[1]][1]}))
+summary(data[,c("fsh3","fsh4","fsh5")])
+```
+
+Filling in the missing FSH3 values with those from later in the study, where these are available:
+```{r datacleaning2a}
+# fill in missing FSH3 values with later, if available
+table(is.na(data$fsh3))
+data$fsh3[is.na(data$fsh3)] <- data$fsh4[is.na(data$fsh3)]
+table(is.na(data$fsh3))
+data$fsh3[is.na(data$fsh3)] <- data$fsh5[is.na(data$fsh3)]
+table(is.na(data$fsh3))
+```
+
+Examining estradiol:
+```{r datacleaning3}
+# Estradiol 
+names(data)[c(20,22,24,26)]
+summary(data[,c(20,22,24,26)])
+```
+
+There's a single ">3000" value in E2 Day 9. Change it to NA.
+```{r datacleaning3a}
+data[which(data[,20]=="> 3000"),20]
+# [1666,20]
+data[1666,c(20,22,24,26)]
+data[1666,20] <- NA
+data[,20] <- as.numeric(unlist(data[,20]))
+```
+
+Construct last value recorded for E2 -- after first omitting 339 (!) observations with no E2 at all
+
+```{r datacleaning4}
+# first omit 338 (!) observations with no E2 at all
+table(apply(data[,c(20,22,24,26)], 1, function(x){sum(is.na(x))}))
+na.counts <- apply(data[,c(20,22,24,26)], 1, function(x){sum(is.na(x))})
+data <- data[na.counts != 4,]
+## dim(data)
+data <- as.data.frame(data)
+data$lastE2 <- data[,20]
+table(is.na(data$lastE2))
+data$lastE2 <- ifelse(!is.na(data[,22]), data[,22], data$lastE2)
+table(is.na(data$lastE2))
+data$lastE2 <- ifelse(!is.na(data[,24]), data[,24], data$lastE2)
+table(is.na(data$lastE2))
+data$lastE2 <- ifelse(!is.na(data[,26]), data[,26], data$lastE2)
+table(is.na(data$lastE2))
+data$lastE2 <- as.numeric(unlist(data$lastE2))
+```
+
+Removing 2 BMIs of zero:
+```{r datacleaning5a}
+data <- data[data$BMI>0,]
+#dim(data)
+```
+
+Remove a single "Lupron" only lupron protocol also single "Unstimulated"
+```{r datacleaning5b}
+data <- subset(data, data[,7]!="Lupron")
+data <- subset(data, data[,7]!="Unstimulated")
+dim(data)
+```
+
+Remove a single FSH3 value in excess of 3000
+```{r datacleaning5c}
+data <- subset(data, fsh3 < 3000)
+```
+
+Fill in missing #MII values with Total Blast Conversion, if available
+```{r datacleaning6a}
+data$`#MII`[is.na(data$`#MII`)] <- data$`Total Blast Conversion`[is.na(data$`#MII`)]
+```
+
+Removing Total Blast Conversion is NA 
+```{r datacleaning6b}
+data <- subset(data, !is.na(data[,43]))
+```
+
+#MII should be >= Total Blast Conversion
+```{r datacleaning6c}
+table(data$`#MII` >= data$`Total Blast Conversion`)     # There are 2
+```
+
+Remove #MII < Total Blast Conversion
+```{r datacleaning6d}
+data <- subset(data, (data$`#MII` >= data$`Total Blast Conversion`)==TRUE)
+```
+
+Remove lastE2 is NA
+```{r datacleaning6e}
+data <- subset(data, !is.na(lastE2))
+dim(data)       # Final data after data cleaning
+```
+
+Our parameters of interest are: age, BMI; antral follicle count (AFC), and AMH, listed in columns B, D, E, and F respectively
+
+Three “protocols” are used. microdose Lupron or MDL; long lupron or LL and antagonist.
+
+Setting up variable with names that match these, which will make subsequent code easier to read
+```{r datacleaning6}
+data$age <- data[,2]
+data$bmi <- data$BMI
+data$lupprot <- data[,7]
+data$amh <- data$AMH
+data$afc <- data[,5]
+data$mii <- data[,39]
+data$Total_bc <- data[,43]
+```
+
+### Data summary
+
+```{r summaryplots}
+plot(log(lastE2)~age , data=data, pch=19, col="#00000020")
+lines(lowess(x=data$age, y=log(data$lastE2), iter=0), col=2)
+
+plot(log(lastE2)~bmi, data=data, pch=19, col="#00000020")
+lines(lowess(x=data$bmi, y=log(data$lastE2), iter=0), col=2)
+
+#table(data$lupprot)
+library(tidyverse)
+ggplot(data, aes(x=log(lastE2), y=lupprot)) + 
+        geom_violin(trim=FALSE, fill="gray")+
+        labs(title="Plot of Lupron protocol  by log(lastE2)",x="log(lastE2)", y = "Lupron protocol")+
+        geom_boxplot(width=0.1)+
+        theme_classic()
+
+plot(log(lastE2)~afc, data=data, pch=19, col="#00000020")
+with(subset(data), lines(lowess(x=afc, y=log(lastE2), iter=0), col=2))
+
+plot(log(lastE2)~log(amh), data=data, pch=19, col="#00000020")
+with(subset(data, !is.na(amh)), lines(lowess(x=log(amh), y=log(lastE2), iter=0), col=2))
+
+plot(log(lastE2)~fsh3, data=data, pch=19, col="#00000020")
+with(subset(data, !is.na(amh)), lines(lowess(x=fsh3, y=log(lastE2), iter=0), col=2))
+
+plot(log(lastE2)~mii, data=data, pch=19, col="#00000020")
+with(subset(data, !is.na(mii)), lines(lowess(x=fsh3, y=log(lastE2), iter=0), col=2))
+
+plot(log(lastE2)~Total_bc, data=data, pch=19, col="#00000020")
+with(subset(data, !is.na(Total_bc)), lines(lowess(x=fsh3, y=log(lastE2), iter=0), col=2))
+```
+
+Correlations between pairs of variables
+
+```{r summarycorrelations}
+data$logamh <- log(data$amh)
+data$loglastE2 <- log(data$lastE2)
+round(cor(data[,c("age","bmi","afc","logamh", "lastE2","fsh3", "mii","Total_bc")], use="pairwise.complete.obs"),3)
+```
+
+### Statistical analysis
+
+For convenience, construct variables indicating whether AFC=0, and "dummy variables" encoding Lupron protocols;
+```{r posthocvariables}
+data$afc0 <- ifelse(data$afc==0, 1, 0)
+table(data$lupprot)
+data$lup.lpl05<- ifelse(data$lupprot=="LPL 10/5", 1, 0)
+data$lup.lpmic<- ifelse(data$lupprot=="Lupron Microdose", 1, 0)
+```
+
+A first analysis: linear regression of log-last E2 value on FSH adjusting for age, BMI, lupron protocol, AFC and whether AFC=0, and log AMH. Those with missing AMH values are omitted:
+
+```{r analysis1}
+#srm$cutafc <- cut(srm$afc, c(-1,0,5,10,15,20,30,100))
+#table(srm$cutafc)
+clean.data <- subset(data, !is.na(amh)) 
+m1 <- lm(log(lastE2)~age + bmi + afc + afc0 + log(amh) + factor(lupprot) +fsh3, data=clean.data) 
+cmat <- coef(summary(m1))
+#library("rigr")
+#m1.r <- regress("mean", loglastE2~age + bmi + cutafc +logamh + factor(lupprot) + fsh3, data=clean.srm)
+#print(m1.r)
+signif(cbind(est=cmat[,1], confint(m1), p.value=cmat[,4]),3)
+```
+Turn this into a nomogram:
+
+```{r nomogram, echo=FALSE}
+#install.packages("rms")
+library("rms", quietly=TRUE)
+m2 <- ols(log(lastE2)~age + bmi + afc + afc0 + logamh + lup.lpl05 + lup.lpmic + fsh3, data=clean.data) 
+dd <- datadist(clean.data[,c("age","bmi","afc","afc0","logamh","lupprot", "lup.lpl05","lup.lpmic", "fsh3")]); options(datadist='dd')
+plot(nomogram(m2))
+title("Nomogram, predicting last E2 value (Rsq=0.367)")
+```
+
+\textbf{Interpretation}: this plot shows that AMH is doing the bulk of the work when the model determines a value for (mean) E2 among those with particular covariate values. For all the other variables, comparing individuals at opposite ends of the plotted axis, the difference in log E2 value is not impressive. But for those with even minor AMH differences, we see greater differentiation between their mean log E2 values.
+
+Residual confounding might be a concern here, so a version that adjusts more flexibly for age, AMH, and then evaluates what FSH3 contributes after that:
+
+```{r analysis2}
+library("splines")
+m3a <- lm(loglastE2~bs(age) + bmi + afc + afc0 + bs(logamh) + factor(lupprot), data=clean.data) 
+m3b <- lm(loglastE2~bs(age) + bmi + afc + afc0 + bs(logamh) + factor(lupprot) + fsh3, data=clean.data) 
+summary(m3b)
+anova(m3a,m3b)
+```
+
+\textbf{Interpretation:} FSH3 appears to contribute, after accounting for AMH and other variables, but the contribution is *much* smaller than for AMH. We can tell this because the coefficient is essentially identical to the less-flexible fit, illustrated by the nomogram.
+
+### Interaction analyses - Linear Regression
+
+It's of interest to see whether FSH3 modifies the E2:AMH relationship. No modification does not mean no effect, just that the effect of FSH appears similar regardless of the value of AMH.
+
+```{r interaction1}
+data$fsh3cat <- cut(data$fsh3, c(0,150,250,350,600))
+data$lupprot.f <- factor(data$lupprot)
+data$amh.f <- cut(data$amh, quantile(data$amh, seq(0,1,l=5), na.rm=TRUE))
+table( data$amh.f )
+
+m3 <- lm(loglastE2~age + bmi + afc + afc0 + logamh*fsh3cat + lupprot.f, data=subset(data, !is.na(amh))) 
+summary(m3)
+anova(m3)
+
+
+m4 <- lm(loglastE2~age + bmi + afc + afc0 + bs(logamh)*fsh3cat + lupprot.f, data=subset(data, !is.na(amh))) 
+summary(m4)
+anova(m4)
+
+m5 <- lm(loglastE2~age + bmi + afc + afc0 + fsh3*amh.f + lupprot.f, data=subset(data,!is.na(amh))) 
+summary(m5)
+anova(m5)
+
+m6 <- lm(loglastE2~age + bmi + afc + afc0 + bs(fsh3)*amh.f + lupprot.f, data=subset(data, !is.na(amh))) 
+summary(m6)
+anova(m6)
+
+
+myranges <- sapply(1:4, function(i){ range( subset(data, fsh3cat==levels(data$fsh3cat)[i])$logamh, na.rm=TRUE)})
+myranges2 <- sapply(1:4, function(i){ range( subset(data, amh.f==levels(data$amh.f)[i])$fsh3, na.rm=TRUE)})
+
+
+with(data, plot(loglastE2~ logamh, pch=19, col="#00000020"))
+for(i in 1:4){
+	mynewdata <- data.frame(age=mean(data$age), bmi=mean(data$age), afc=mean(data$afc), 
+afc0=mean(data$afc0), fsh3cat=levels(data$fsh3cat)[i], lupprot.f="Antagonist", 
+	logamh=seq(myranges[1,i], myranges[2,i], l=31) )
+	myfit <- predict(m3, newdata= mynewdata)
+	lines(x=mynewdata$logamh, y=myfit, lwd=i, col=i+1)
+}
+legend("topleft", col=2:5, lwd=1:4, levels(data$fsh3cat))
+title(main="Straight line fits by FSH3 category", sub="Note: numeric covariates at mean level, lupprot=antagonist")
+
+with(data, plot(loglastE2~ logamh, pch=19, col="#00000020"))
+for(i in 1:4){
+	mynewdata <- data.frame(age=mean(data$age), bmi=mean(data$age), afc=mean(data$afc), 
+afc0=mean(data$afc0), fsh3cat=levels(data$fsh3cat)[i], lupprot.f="Antagonist", 
+	logamh=seq(myranges[1,i], myranges[2,i], l=31) )
+	myfit <- predict(m4, newdata= mynewdata)
+	lines(x=mynewdata$logamh, y=myfit, lwd=i, col=i+1)
+}
+legend("topleft", col=2:5, lwd=1:4, levels(data$fsh3cat))
+title(main="Spline fits by FSH3 category", sub="Note: numeric covariates at mean level, lupprot=antagonist")
+```
+
+### Statistical learning approaches
+
+
+```{r lasso1}
+#install.packages("glmnet")
+library("glmnet")
+
+# comparison of main effects-only model with CV lasso
+par(mfrow=c(1,2))
+coef(summary(m1))
+plot(glmnet(x=model.matrix(m1)[,-1], y=m1$model[,1]), 
+xvar="lambda", label=TRUE, xlim=c(-8,-1))
+set.seed(4)
+cv.glmnet1 <- cv.glmnet(x=model.matrix(m1)[,-1], y=m1$model[,1])
+print(cv.glmnet1 )
+tail( anova(m1)[,"Mean Sq"], 1)
+abline(v=log(cv.glmnet1$lambda.min), lty=2)
+plot(cv.glmnet1 )
+cv.glmnet1$lambda.min 
+log(cv.glmnet1$lambda.min)
+cbind( coef(m1), coef(cv.glmnet1, s = "lambda.min"))
+```
+
+\textbf{Interpretation:} the lasso approach can potentially achieve better prediction of logE2 values, by shrinking the "classical" estimates towards zero in a way suggested by the patterns in the data. This makes them more stable, albeit at the cost of some bias. Cross-validation is used to choose the apparently-best degree of shrinkage, i.e. the best tradeoff. But for this large dataset with clear signals, it seems we do best not shrinking at all.
+
+Also note how, if we were to shrink the coefficients anyway, AMH is the last one to be shrunk, emphasizing what we saw in the other analyses.
+
+Trying the same approach for the more flexible representation of FSH3, and its interaction with AMH, we again see that all the AMH terms persist best under shrinkage. Also, lasso's degree of improvement in prediction (proportion of variance explained, known as $R^2$) is very minor, when optimized via cross-validation.
+
+```{r lasso2}
+# comparison of main effects-only model with CV lasso
+coef(summary(m3))
+#plot(glmnet(x=model.matrix(m3)[,-1], y=m3$model[,1]))
+plot(glmnet(x=model.matrix(m3)[,-1], y=m3$model[,1]), 
+xvar="lambda", label=TRUE, xlim=c(-8,-1))
+set.seed(4)
+cv.glmnet3 <- cv.glmnet(x=model.matrix(m3)[,-1], y=m3$model[,1])
+abline(v=log(cv.glmnet3$lambda.min), lty=2)
+print(cv.glmnet3 )
+tail( anova(m3)[,"Mean Sq"], 1)
+plot(cv.glmnet3 )
+cv.glmnet3$lambda.min 
+log(cv.glmnet3$lambda.min)
+cbind( coef(m3), coef(cv.glmnet3, s = "lambda.min"))
+```
+
+### Poisson regression
+#### analysis for the number of mature oocytes
+```{r poisson1}
+# mii
+m7 <- glm(mii ~ age + bmi + afc + afc0 + log(amh) + factor(lupprot) + fsh3, 
+          data=clean.data,
+          family = poisson(link="log"))
+summary(m7)
+# offset = log(lastE2)?
+```
+log(amh) and afc contribute a lot to determine the number of mature oocytes
+
+### analysis for the total number of blast conversion 
+```{r poisson2}
+## Total_bc
+m8 <- glm(Total_bc ~ age + bmi + afc + afc0 + log(amh) + factor(lupprot) + fsh3, 
+          data=clean.data,
+          family = poisson(link="log"))
+summary(m8)
+```
+afc0 and log(amh) contribute a lot to determine the total number of blast conversion.
+
+```{r anova m8}
+anova(m8)
+```
+
+#### analysis for the number of fertilized 
+```{r poisson3}
+# Create fert contains either ICSI or IVF
+clean.data$fert <- clean.data$`Number Fertilized (ICSI)`
+clean.data$fert[clean.data$fert == 0] <- clean.data$`Number Fertilized (IVF)`[clean.data$fert == 0]
+m9 <- glm(fert ~ age + bmi + afc + afc0 + log(amh) + factor(lupprot) + fsh3, 
+          data=clean.data,
+          family = poisson(link="log"))
+summary(m9)
+```
+Also, afc0 and log(amh) contribute a lot to determine the total number of fertilized.
+
+```{r m9}
+anova(m9)
+```
+
+### Logistic Regression
+Create counts of success (conversion or not) and counts of failure
+```{r logistic prep}
+clean.data$success <- clean.data$Total_bc
+clean.data$failure <- clean.data$mii - clean.data$Total_bc
+```
+
+```{r logistic plot}
+plot(success ~ log(lastE2), clean.data)
+with(clean.data, lines(lowess(success ~ log(lastE2)),col=2))
+
+# scatterplot standardized for trial size
+plot(success/(success + failure) ~ log(lastE2), clean.data, ylim = c(0,1))
+```
+
+```{r logistic model}
+m10 <- glm(cbind(success, failure) ~ age + bmi + afc + afc0 + log(amh) + factor(lupprot) + fsh3,
+          data = clean.data,
+          family = "binomial")
+summary(m10)
+```
+afc0 contributes a lot to determine the success of blast conversion.
+
+### Analysis for the fertilized rate
+```{r fertilized rate}
+# Create fertilized rate and remove NA
+clean.data$fert.rate <- clean.data$fert / clean.data$mii
+table(is.na(clean.data$fert.rate))
+clean.data <- subset(clean.data, !is.na(clean.data$fert.rate))
+clean.data <- subset(clean.data, !is.infinite(clean.data$fert.rate))
+```
+
+```{r fertilized rate model}
+# Linear model for fertilized rate
+m11 <- lm(fert.rate~age + bmi + afc + afc0 + log(amh) + factor(lupprot) +fsh3, data=clean.data) 
+summary(m11)
+```
+
+### Nomogram predicting fertilized rate
+```{r Nomogram fertilized rate}
+m12 <- ols(fert.rate~age + bmi + afc + afc0 + logamh + lup.lpl05 + lup.lpmic + fsh3, data=clean.data) 
+dd <- datadist(clean.data[,c("age","bmi","afc","afc0","logamh","lupprot", "lup.lpl05","lup.lpmic", "fsh3")]); options(datadist='dd')
+plot(nomogram(m12))
+title("Nomogram, predicting fertilized rate")
+```
+This plot shows that AMH highly affect the model determining a value for fertilized rate among those with particular covariate values.
+
+conversion rate
+```{r conversion rate}
+clean.data$conv.rate <- clean.data$Total_bc / clean.data$mii
+table(is.na(clean.data$conv.rate))
+clean.data <- subset(clean.data, !is.na(clean.data$conv.rate))
+table(is.na(clean.data$conv.rate))
+# Linear model for conversion rate
+m13 <- lm(fert.rate~age + bmi + afc + afc0 + log(amh) + factor(lupprot) +fsh3, data=clean.data) 
+summary(m13)
+```
+
+## Nomogram predicting conversion rate
+```{r Nomogram conversion rate}
+m14 <- ols(conv.rate~age + bmi + afc + afc0 + logamh + lup.lpl05 + lup.lpmic + fsh3, data=clean.data) 
+dd <- datadist(clean.data[,c("age","bmi","afc","afc0","logamh","lupprot", "lup.lpl05","lup.lpmic", "fsh3")]); options(datadist='dd')
+plot(nomogram(m14))
+title("Nomogram, predicting conversion rate")
+```
+
+This plot shows that AMH is doing the most bulk of the work when the model determining a value for conversion rate among those with particular covariate values. In addition, age, afc0 and fsh3 also highly affect the model.  
+
